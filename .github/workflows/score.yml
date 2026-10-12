@@ -1,0 +1,52 @@
+name: Score exposure
+
+# Runs the exposure scoring pipeline (scripts/score.mjs) against Supabase.
+# Start it from the Actions tab (Run workflow), or add the "run-scoring" label to a
+# pull request to score from that branch before it merges.
+#
+# Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENAI_API_KEY
+# Variables: OPENAI_MODEL, OPENAI_PRICE_INPUT_PER_1M, OPENAI_PRICE_OUTPUT_PER_1M
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset:
+        description: Dataset to score (fow.datasets.dataset_id)
+        default: builtin
+        required: true
+      dry_run:
+        description: Load tasks and build job tasks only; no model calls
+        type: boolean
+        default: false
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: score-exposure
+  cancel-in-progress: false
+
+jobs:
+  score:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-scoring'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      OPENAI_PRICE_INPUT_PER_1M: ${{ vars.OPENAI_PRICE_INPUT_PER_1M }}
+      OPENAI_PRICE_OUTPUT_PER_1M: ${{ vars.OPENAI_PRICE_OUTPUT_PER_1M }}
+      DATASET: ${{ inputs.dataset || 'builtin' }}
+      DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run score -- --dataset "$DATASET" $DRY_RUN
