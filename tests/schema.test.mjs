@@ -64,9 +64,6 @@ test("The four UI views exist, run as the caller, and suppress small groups", ()
   assert.match(sql, /create function fow\.min_group_size\(\)[\s\S]*?select 10/);
 });
 
-test("The seed has a fixed default seed and writes only fow tables", async () => {
+test("The seed has a fixed default seed", () => {
   assert.match(sql, /create function fow\.seed_builtin\(p_seed integer default 20261012\)/);
-  const script = await readFile(new URL("../scripts/seed.mjs", import.meta.url), "utf8");
-  assert.match(script, /DEFAULT_SEED = 20261012/);
-  assert.match(script, /\.schema\("fow"\)\s*\.rpc\("seed_builtin"/);
 });

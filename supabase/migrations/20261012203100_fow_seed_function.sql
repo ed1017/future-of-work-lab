@@ -1,7 +1,7 @@
 -- Future of Work Lab: reproducible seed for the builtin dataset and the
 -- synthetic adoption, pulse, and governance data.
 --
--- Run with: select fow.seed_builtin();   (or npm run seed)
+-- Run with: select fow.seed_builtin();
 -- Random draws use the helpers in the fow_seed_helpers migration.
 -- Reads public tables; writes fow tables only. Safe to re-run: it replaces
 -- synthetic usage and pulse rows and upserts the seeded tools, questions,

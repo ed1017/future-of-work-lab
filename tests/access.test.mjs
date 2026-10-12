@@ -16,7 +16,9 @@ const skip = !url || !anonKey ? "SUPABASE_URL and SUPABASE_ANON_KEY not set" : f
 
 const anonCannotRead = async (schema, table) => {
   const anon = createClient(url, anonKey, { auth: { persistSession: false } });
-  const { data, error } = await anon.schema(schema).from(table).select("*").limit(1);
+  const { data, error, status } = await anon.schema(schema).from(table).select("*").limit(1);
+  // status 0 means the request never reached Supabase; that proves nothing.
+  assert.notEqual(status, 0, `could not reach Supabase: ${error?.message}`);
   assert.ok(error || data.length === 0, `anon read rows from ${schema}.${table}`);
 };
 

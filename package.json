@@ -9,8 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"tests/**/*.test.mjs\"",
-    "score": "node scripts/score.mjs",
-    "seed": "node scripts/seed.mjs"
+    "score": "node scripts/score.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
