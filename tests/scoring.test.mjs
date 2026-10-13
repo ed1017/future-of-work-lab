@@ -10,6 +10,7 @@ import {
   loadPrompt,
   taskScoreSchema,
 } from "../lib/scoring/rubric.mjs";
+import { supabaseProjectUrl } from "../lib/scoring/supabase-url.mjs";
 import { buildJobTasks, jobExposure, timeShares, weightedRollup } from "../lib/scoring/time-share.mjs";
 
 const valid = {
@@ -292,4 +293,13 @@ test("The scoring workflow runs on demand or on the run-scoring label, with secr
     assert.match(yml, new RegExp(`${name}: \\$\\{\\{ secrets\\.${name} \\}\\}`));
   }
   assert.match(yml, /npm run score -- --dataset/);
+});
+
+test("SUPABASE_URL is reduced to the project URL, and dashboard links are refused", () => {
+  const project = "https://abc123.supabase.co";
+  for (const raw of [project, `${project}/`, `${project}/rest/v1/`, ` ${project}/rest/v1 `]) {
+    assert.equal(supabaseProjectUrl(raw), project, raw);
+  }
+  assert.throws(() => supabaseProjectUrl("https://supabase.com/dashboard/project/abc123"), /dashboard link/);
+  assert.throws(() => supabaseProjectUrl("abc123"), /not a URL/);
 });

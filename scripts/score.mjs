@@ -19,6 +19,7 @@ import OpenAI from "openai";
 import { costUsd, makeBatches, readPrices, scoreBatch } from "../lib/scoring/batch.mjs";
 import { DEFAULT_ONET_RELEASE, buildTaskStatements, onetZipUrl } from "../lib/scoring/onet.mjs";
 import { RUBRIC_VERSION, loadPrompt } from "../lib/scoring/rubric.mjs";
+import { supabaseProjectUrl } from "../lib/scoring/supabase-url.mjs";
 import { buildJobTasks } from "../lib/scoring/time-share.mjs";
 
 const { values: args } = parseArgs({
@@ -94,7 +95,7 @@ const main = async () => {
   const datasetId = args.dataset;
   if (!datasetId) throw new Error("Usage: npm run score -- --dataset <id> [--dry-run]");
   requireEnv("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY");
-  const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+  const db = createClient(supabaseProjectUrl(process.env.SUPABASE_URL), process.env.SUPABASE_SERVICE_ROLE_KEY, {
     db: { schema: "fow" },
     auth: { persistSession: false },
   });
