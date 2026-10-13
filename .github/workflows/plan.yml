@@ -1,0 +1,54 @@
+name: Plan actions
+
+# Runs the action planner (scripts/plan.mjs): one model recommendation per function,
+# written to fow.action_recommendations, then the milestone 6 evidence check.
+# Start it from the Actions tab (Run workflow), or add the "run-planning" label to a
+# pull request to plan from that branch before it merges.
+#
+# Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENAI_API_KEY
+# Variables: OPENAI_MODEL, OPENAI_PRICE_INPUT_PER_1M, OPENAI_PRICE_OUTPUT_PER_1M
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset:
+        description: Dataset to plan (fow.datasets.dataset_id)
+        default: builtin
+        required: true
+      mode:
+        description: plan = generate and check; dry-run = build facts only; verify-only = check the newest plan
+        type: choice
+        options: [plan, dry-run, verify-only]
+        default: plan
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plan-actions
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-planning'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      OPENAI_PRICE_INPUT_PER_1M: ${{ vars.OPENAI_PRICE_INPUT_PER_1M }}
+      OPENAI_PRICE_OUTPUT_PER_1M: ${{ vars.OPENAI_PRICE_OUTPUT_PER_1M }}
+      DATASET: ${{ inputs.dataset || 'builtin' }}
+      MODE_FLAG: ${{ inputs.mode == 'dry-run' && '--dry-run' || inputs.mode == 'verify-only' && '--verify-only' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run plan -- --dataset "$DATASET" $MODE_FLAG

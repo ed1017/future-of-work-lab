@@ -2,12 +2,18 @@
 
 import { usePathname, useRouter } from "next/navigation";
 
-type Props = { functions: string[]; functionName: string | null; weighting: "cost" | "headcount" };
+type Props = {
+  functions: string[];
+  functionName: string | null;
+  weighting: "cost" | "headcount";
+  /** False on screens that do not change with the weighting. */
+  showWeighting?: boolean;
+};
 
 const selectClass =
   "h-10 w-full rounded-lg border border-input bg-card px-3 text-sm text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/40";
 
-export function OverviewFilters({ functions, functionName, weighting }: Props) {
+export function OverviewFilters({ functions, functionName, weighting, showWeighting = true }: Props) {
   const router = useRouter();
   const pathname = usePathname();
 
@@ -38,13 +44,15 @@ export function OverviewFilters({ functions, functionName, weighting }: Props) {
           ))}
         </select>
       </label>
-      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-        Weighting
-        <select className={selectClass} value={weighting} onChange={(e) => go({ weighting: e.target.value })}>
-          <option value="cost">Cost-weighted</option>
-          <option value="headcount">Headcount-weighted</option>
-        </select>
-      </label>
+      {showWeighting ? (
+        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+          Weighting
+          <select className={selectClass} value={weighting} onChange={(e) => go({ weighting: e.target.value })}>
+            <option value="cost">Cost-weighted</option>
+            <option value="headcount">Headcount-weighted</option>
+          </select>
+        </label>
+      ) : null}
     </div>
   );
 }
