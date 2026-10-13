@@ -15,8 +15,9 @@ import { supabaseProjectUrl } from "@/lib/scoring/supabase-url.mjs";
 export const DEFAULT_DATASET = "builtin";
 
 function client() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // Trim: a pasted env value with a trailing newline or space is an invalid header value.
+  const url = process.env.SUPABASE_URL?.trim();
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!url || !key) {
     throw new Error(
       "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are not set. Add them as environment variables (Vercel project settings, or .env.local locally).",
@@ -38,11 +39,24 @@ function check<T>(result: { data: unknown; error: { code?: string; message: stri
 
 type RunStamp = { status: string; finished_at: string | null; started_at: string };
 
-/** Why a read failed, as text safe to show: never includes the URL or key. */
+/**
+ * Why a read failed, as text safe to show. Error messages can echo request values, so
+ * anything shaped like a key or token, and the configured secrets themselves, are redacted.
+ */
 export function describeLoadError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const cause = error instanceof Error && error.cause instanceof Error ? ` (${error.cause.message})` : "";
-  return `${message}${cause}`.slice(0, 400);
+  let text = `${message}${cause}`;
+  for (const secret of [process.env.SUPABASE_SERVICE_ROLE_KEY, process.env.SUPABASE_URL, process.env.OPENAI_API_KEY]) {
+    const value = secret?.trim();
+    if (value && value.length >= 8) text = text.split(value).join("[redacted]");
+  }
+  text = text
+    .replace(/sb_(?:secret|publishable)_[\w-]+/g, "[redacted]")
+    .replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, "[redacted]")
+    .replace(/sk-[\w-]{8,}/g, "[redacted]")
+    .replace(/https?:\/\/\S+/g, "[url]");
+  return text.slice(0, 400);
 }
 
 export type ActionRow = { scope_key: string; move: string; text: string };
