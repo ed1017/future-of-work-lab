@@ -16,7 +16,7 @@ export function SiteHeader({ active, datasetName }: { active: string; datasetNam
         <nav aria-label="Primary" className="flex flex-wrap items-center gap-1 text-sm">
           {tabs.map((route) => {
             const isActive = route.href === active;
-            const live = ["/", "/exposure"].includes(route.href);
+            const live = ["/", "/exposure", "/adoption", "/governance"].includes(route.href);
             const classes = isActive
               ? "rounded-lg bg-white px-3 py-2 font-medium text-foreground"
               : "rounded-lg px-3 py-2 text-white/80 hover:bg-white/10";

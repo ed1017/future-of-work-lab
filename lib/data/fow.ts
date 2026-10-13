@@ -142,3 +142,133 @@ export async function getJobTasks(datasetId: string, jobKey: string) {
     scores,
   };
 }
+
+// Adoption and governance ------------------------------------------------------
+
+export type ManagerTeamRow = {
+  function_name: string;
+  team_number: number;
+  headcount: number;
+  licensed_employees: number;
+  weekly_active_users: number;
+  licensed_rate: number;
+  weekly_active_rate: number;
+};
+
+export type ToolMixRow = {
+  tool_id: string;
+  name: string;
+  category: string;
+  approved: boolean;
+  licenses: number;
+  week_start: string;
+  suppressed: boolean;
+  weekly_active_users: number | null;
+  sessions: number | null;
+};
+
+export type PulseRow = {
+  level: "company" | "function";
+  function_name: string | null;
+  question_code: string;
+  question_text: string;
+  response_date: string;
+  suppressed: boolean;
+  respondents: number | null;
+  favorable_rate: number | null;
+  mean_score: number | null;
+};
+
+export async function getAdoptionData() {
+  const db = client();
+  const [adoption, managers, tools, pulse] = await Promise.all([
+    db.from("v_exposure_adoption").select("*").eq("dataset_id", DEFAULT_DATASET),
+    db.from("v_adoption_manager").select("*"),
+    db.from("v_tool_mix").select("*"),
+    db.from("v_pulse_sentiment").select("*"),
+  ]);
+  return {
+    adoption: check<AdoptionRow[]>(adoption, "v_exposure_adoption"),
+    managers: check<ManagerTeamRow[]>(managers, "v_adoption_manager"),
+    tools: check<ToolMixRow[]>(tools, "v_tool_mix"),
+    pulse: check<PulseRow[]>(pulse, "v_pulse_sentiment"),
+  };
+}
+
+export type ToolOption = { tool_id: string; name: string };
+
+export type AssessmentRow = {
+  assessment_id: string;
+  use_case_id: string;
+  framework: string;
+  tier: string;
+  rationale: string;
+  review_state: string;
+  assessed_on: string;
+  bias_audit_date: string | null;
+  next_review_date: string | null;
+};
+
+export type UseCaseDetail = {
+  use_case_id: string;
+  name: string;
+  hr_process: string;
+  tool_id: string | null;
+  decision_impact: string;
+  owner: string;
+  human_in_loop: boolean;
+  status: string;
+  description: string | null;
+};
+
+/** The register is not employee data, so every visitor reads it. */
+export async function getRegister() {
+  const db = client();
+  return check<RegisterRow[]>(await db.from("v_register").select("*"), "v_register");
+}
+
+/** Editing context. Callers must have confirmed the admin session first. */
+export async function getEditContext() {
+  const db = client();
+  const [tools, useCases, assessments] = await Promise.all([
+    db.from("ai_tools").select("tool_id, name").order("name"),
+    db
+      .from("ai_use_cases")
+      .select("use_case_id, name, hr_process, tool_id, decision_impact, owner, human_in_loop, status, description"),
+    db
+      .from("risk_assessments")
+      .select("assessment_id, use_case_id, framework, tier, rationale, review_state, assessed_on, bias_audit_date, next_review_date")
+      .order("assessed_on", { ascending: false }),
+  ]);
+  return {
+    tools: check<ToolOption[]>(tools, "ai_tools"),
+    useCases: check<UseCaseDetail[]>(useCases, "ai_use_cases"),
+    assessments: check<AssessmentRow[]>(assessments, "risk_assessments"),
+  };
+}
+
+type UseCaseInput = Omit<UseCaseDetail, "use_case_id">;
+type AssessmentInput = Omit<AssessmentRow, "assessment_id">;
+
+function written(result: { error: { message: string } | null }, what: string) {
+  // Only the table name leaves this function; the database message stays out of the UI.
+  if (result.error) throw new Error(`${what} write failed`);
+}
+
+export async function upsertUseCase(id: string | null, input: UseCaseInput) {
+  const db = client();
+  const row = { ...input, updated_at: new Date().toISOString() };
+  written(id ? await db.from("ai_use_cases").update(row).eq("use_case_id", id) : await db.from("ai_use_cases").insert(row), "ai_use_cases");
+}
+
+export async function insertAssessment(input: AssessmentInput) {
+  const db = client();
+  written(
+    await db.from("risk_assessments").upsert(input, { onConflict: "use_case_id,framework,assessed_on" }),
+    "risk_assessments",
+  );
+}
+
+export async function deleteUseCase(id: string) {
+  written(await client().from("ai_use_cases").delete().eq("use_case_id", id), "ai_use_cases");
+}
