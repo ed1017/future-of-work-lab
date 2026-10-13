@@ -66,3 +66,31 @@ test("Write helpers are only imported by the admin-guarded actions", async () =>
   for (const d of ["app/", "components/", "lib/"]) await walk(new URL(`../${d}`, import.meta.url));
   assert.deepEqual(hits.sort(), ["app/governance/actions.ts", "lib/data/fow.ts"]);
 });
+
+test("Validation review actions check the admin session first, and only they use the review write helpers", async () => {
+  const source = await readFile(new URL("../app/admin/review/actions.ts", import.meta.url), "utf8");
+  const actions = [...source.matchAll(/export async function (\w+Action)\([^)]*\)[^{]*\{([\s\S]*?)\n\}/g)];
+  assert.deepEqual(actions.map((m) => m[1]).sort(), ["drawSampleAction", "saveReviewAction"]);
+  for (const [, name, body] of actions) {
+    const guard = body.indexOf("await requireAdmin()");
+    const write = body.search(/\b(drawValidationSample|saveReview)\(/);
+    assert.ok(guard >= 0 && write > guard, `${name} must call requireAdmin before writing`);
+  }
+  const { readdir } = await import("node:fs/promises");
+  const hits = [];
+  const walk = async (dir) => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      if (["node_modules", ".next", ".git"].includes(entry.name)) continue;
+      const path = new URL(`${entry.name}${entry.isDirectory() ? "/" : ""}`, dir);
+      if (entry.isDirectory()) await walk(path);
+      else if (/\.(ts|tsx)$/.test(entry.name) && /\b(drawValidationSample|saveReview)\b/.test(await readFile(path, "utf8"))) hits.push(path.pathname.split("/future-of-work-lab/")[1]);
+    }
+  };
+  for (const d of ["app/", "components/", "lib/"]) await walk(new URL(`../${d}`, import.meta.url));
+  assert.deepEqual(hits.sort(), ["app/admin/review/actions.ts", "lib/data/fow.ts"]);
+});
+
+test("The public methodology page never selects reviewer identity or notes", async () => {
+  const page = await readFile(new URL("../app/methodology/page.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(page, /getReviewQueue|\.reviewer\b|\.note\b/);
+});
