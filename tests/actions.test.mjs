@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { checkRecommendation, dataPoint, describeSource, evidenceHref, formatValue, resolveEvidence } from "../lib/actions/evidence.mjs";
 import { buildFunctionFacts, planningScope, rowsByView } from "../lib/actions/facts.mjs";
@@ -180,4 +181,24 @@ test("The planner prompt is versioned in the repo and hashed", async () => {
   assert.match(prompt.text, /redesign[\s\S]*reskill[\s\S]*redeploy[\s\S]*hold/);
   assert.match(prompt.text, /at least two fact ids/);
   assert.match(prompt.sha, /^[0-9a-f]{64}$/);
+});
+
+// Milestone 6 acceptance: the generated plan, checked against the view rows it cites.
+const fixture = JSON.parse(await readFile(new URL("./fixtures/actions/plan.json", import.meta.url), "utf8"));
+
+test("Every generated recommendation names at least two data points that exist in the views", () => {
+  assert.ok(fixture.recommendations.length >= 14, "one recommendation per planned function");
+  assert.equal(new Set(fixture.recommendations.map((r) => r.scope_key)).size, fixture.recommendations.length);
+  for (const rec of fixture.recommendations) {
+    const result = checkRecommendation(rec, fixture.rows);
+    assert.ok(result.passes, `${rec.scope_key}: ${result.metricsFound} of ${result.metrics} cited data points exist`);
+    assert.equal(result.metricsMatching, result.metrics, `${rec.scope_key}: every cited value still matches`);
+  }
+});
+
+test("Every number in a generated recommendation appears in the evidence it cites", () => {
+  for (const rec of fixture.recommendations) {
+    const allowed = new Set(rec.evidence.flatMap((e) => [...numbersIn(formatValue(e.value, e.format)), ...numbersIn(e.label)]));
+    for (const n of numbersIn(rec.text)) assert.ok(allowed.has(n), `${rec.scope_key}: ${n}`);
+  }
 });
