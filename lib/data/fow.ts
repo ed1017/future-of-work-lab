@@ -7,6 +7,7 @@ import type {
   OverviewData,
   RegisterRow,
 } from "@/lib/overview/metrics.mjs";
+import { drawSample, stabilitySummary, validationSummary } from "@/lib/validation/metrics.mjs";
 import { supabaseProjectUrl } from "@/lib/scoring/supabase-url.mjs";
 import { PLANNER_VIEWS } from "@/lib/actions/facts.mjs";
 import type { PlannerRows } from "@/lib/actions/facts.mjs";
@@ -313,4 +314,206 @@ export async function getActionPlanData(datasetId = DEFAULT_DATASET) {
     recommendations: check<RecommendationRow[]>(recommendations, "action_recommendations"),
     rows,
   };
+}
+
+// Methodology and validation -------------------------------------------------------
+
+export type ModelLabel = "automate" | "augment" | "unaffected";
+export type SampleRow = { run_id: string; task_id: number; stratum: ModelLabel; stratum_size: number; position: number };
+export type ReviewRow = { run_id: string; task_id: number; reviewer: string; agrees: boolean; override_label: ModelLabel | null; note: string | null; reviewed_at: string };
+export type RunSummary = {
+  run_id: string;
+  model: string;
+  rubric_version: string;
+  prompt_sha: string;
+  status: string;
+  tasks_scored: number;
+  cost_usd: number | null;
+  started_at: string;
+};
+
+/** True when a read failed only because the milestone 7 tables are not in the database yet. */
+const tableMissing = (message: string) => /PGRST205|42P01|schema cache|does not exist/i.test(message);
+
+async function readAll<T>(build: () => { range: (from: number, to: number) => PromiseLike<{ data: unknown; error: { code?: string; message: string } | null }> }, what: string) {
+  const rows: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const page = check<T[]>(await build().range(from, from + 999), what);
+    rows.push(...page);
+    if (page.length < 1000) return rows;
+  }
+}
+
+/** Latest succeeded score per task (the one the views use), with its run id. */
+async function latestTaskScores() {
+  const rows = await readAll<{
+    run_id: string;
+    task_id: number;
+    label: ModelLabel;
+    exposure: number;
+    confidence: string;
+    rationale: string;
+    scoring_runs: RunStamp | RunStamp[] | null;
+  }>(
+    () =>
+      client()
+        .from("task_exposure_scores")
+        .select("run_id, task_id, label, exposure, confidence, rationale, scoring_runs(status, finished_at, started_at)")
+        .order("task_id"),
+    "task_exposure_scores",
+  );
+  return latestScores(
+    rows.flatMap(({ scoring_runs, ...row }) => {
+      const run = one(scoring_runs);
+      return run ? [{ ...row, run }] : [];
+    }),
+  );
+}
+
+async function readSampleAndReviews() {
+  const db = client();
+  const sampleResult = await db.from("validation_sample").select("run_id, task_id, stratum, stratum_size, position").order("position");
+  if (sampleResult.error && tableMissing(sampleResult.error.message)) return null;
+  const sample = check<SampleRow[]>(sampleResult, "validation_sample");
+  const reviews = sample.length ? check<ReviewRow[]>(await db.from("score_reviews").select("*"), "score_reviews") : [];
+  const bySampleKey = new Set(sample.map((s) => `${s.run_id}:${s.task_id}`));
+  return { sample, reviews: reviews.filter((r) => bySampleKey.has(`${r.run_id}:${r.task_id}`)) };
+}
+
+/** Model labels for the sample tasks: the exact score row each sample entry points at. */
+async function sampleModelLabels(sample: SampleRow[]) {
+  if (!sample.length) return new Map<number, ModelLabel>();
+  const rows = check<{ run_id: string; task_id: number; label: ModelLabel }[]>(
+    await client().from("task_exposure_scores").select("run_id, task_id, label").in("task_id", sample.map((s) => s.task_id)),
+    "task_exposure_scores",
+  );
+  const key = new Map(rows.map((r) => [`${r.run_id}:${r.task_id}`, r.label]));
+  return new Map(sample.flatMap((s) => (key.has(`${s.run_id}:${s.task_id}`) ? [[s.task_id, key.get(`${s.run_id}:${s.task_id}`)!] as const] : [])));
+}
+
+/** Public: aggregates only (counts, rates, kappa). Never reviewer identity, notes, or per-task labels. */
+export async function getMethodologyData() {
+  const db = client();
+  const runs = check<RunSummary[]>(
+    await db
+      .from("scoring_runs")
+      .select("run_id, model, rubric_version, prompt_sha, status, tasks_scored, cost_usd, started_at")
+      .order("started_at", { ascending: false }),
+    "scoring_runs",
+  );
+  const loaded = await readSampleAndReviews();
+  if (!loaded) return { runs, validation: null, stability: null, setUp: false };
+  const modelLabels = await sampleModelLabels(loaded.sample);
+  const humanReviews = new Map<number, ReviewRow>();
+  for (const r of [...loaded.reviews].sort((a, b) => a.reviewed_at.localeCompare(b.reviewed_at))) humanReviews.set(r.task_id, r);
+  const validation = loaded.sample.length ? validationSummary(loaded.sample, modelLabels, humanReviews) : null;
+
+  const retests = check<{ retest_id: string; status: string; tasks_scored: number; cost_usd: number | null; finished_at: string | null }[]>(
+    await db.from("retest_runs").select("retest_id, status, tasks_scored, cost_usd, finished_at").eq("status", "succeeded").order("started_at", { ascending: false }).limit(1),
+    "retest_runs",
+  );
+  let stability = null;
+  if (retests[0]) {
+    const second = check<{ task_id: number; label: ModelLabel }[]>(
+      await db.from("retest_scores").select("task_id, label").eq("retest_id", retests[0].retest_id),
+      "retest_scores",
+    );
+    stability = { ...stabilitySummary(modelLabels, new Map(second.map((r) => [r.task_id, r.label]))), cost_usd: retests[0].cost_usd, finished_at: retests[0].finished_at };
+  }
+  return { runs, validation, stability, setUp: true };
+}
+
+export type ReviewTask = {
+  task_id: number;
+  position: number;
+  stratum: ModelLabel;
+  task_text: string;
+  task_type: string | null;
+  importance: number | null;
+  occupation_titles: string[];
+  reviewed: boolean;
+  /** The reviewer's own label, once given. The model's label is never sent to the reviewer's screen. */
+  my_label: ModelLabel | null;
+  note: string | null;
+};
+
+/** Admin only. Callers must have confirmed the admin session first. */
+export async function getReviewQueue(reviewer: string) {
+  const loaded = await readSampleAndReviews();
+  if (!loaded) return { setUp: false as const, sample: [] as ReviewTask[], eligible: 0 };
+  const db = client();
+  if (!loaded.sample.length) {
+    const scores = await latestTaskScores();
+    return { setUp: true as const, sample: [] as ReviewTask[], eligible: scores.size };
+  }
+  const ids = loaded.sample.map((s) => s.task_id);
+  const [tasks, modelLabels] = await Promise.all([
+    check<{ task_id: number; onetsoc_code: string | null; task_text: string; task_type: string | null; importance: number | null }[]>(
+      await db.from("task_statements").select("task_id, onetsoc_code, task_text, task_type, importance").in("task_id", ids),
+      "task_statements",
+    ),
+    sampleModelLabels(loaded.sample),
+  ]);
+  const codes = [...new Set(tasks.flatMap((t) => (t.onetsoc_code ? [t.onetsoc_code] : [])))];
+  const titles = codes.length
+    ? check<{ onetsoc_code: string; title: string }[]>(await db.from("dataset_jobs").select("onetsoc_code, title").in("onetsoc_code", codes), "dataset_jobs")
+    : [];
+  const byTask = new Map(tasks.map((t) => [t.task_id, t]));
+  const mine = new Map(loaded.reviews.filter((r) => r.reviewer === reviewer).map((r) => [r.task_id, r]));
+  const sample = loaded.sample.map((s): ReviewTask => {
+    const t = byTask.get(s.task_id);
+    const r = mine.get(s.task_id);
+    const model = modelLabels.get(s.task_id);
+    return {
+      task_id: s.task_id,
+      position: s.position,
+      stratum: s.stratum,
+      task_text: t?.task_text ?? "",
+      task_type: t?.task_type ?? null,
+      importance: t?.importance == null ? null : Number(t.importance),
+      occupation_titles: [...new Set(titles.filter((x) => x.onetsoc_code === t?.onetsoc_code).map((x) => x.title))],
+      reviewed: Boolean(r),
+      my_label: r && model ? (r.agrees ? model : r.override_label) : null,
+      note: r?.note ?? null,
+    };
+  });
+  return { setUp: true as const, sample, eligible: sample.length };
+}
+
+/** Draws the 100-task sample once. Does nothing if a sample already exists. Returns the number drawn. */
+export async function drawValidationSample() {
+  const db = client();
+  const existing = check<{ task_id: number }[]>(await db.from("validation_sample").select("task_id").limit(1), "validation_sample");
+  if (existing.length) return 0;
+  const scores = [...(await latestTaskScores()).values()].map((s) => ({ run_id: (s as { run_id?: string }).run_id ?? "", task_id: s.task_id, label: s.label as ModelLabel }));
+  const rows = drawSample(scores);
+  written(await db.from("validation_sample").insert(rows), "validation_sample");
+  return rows.length;
+}
+
+export async function saveReview(input: { task_id: number; reviewer: string; label: ModelLabel; note: string | null }) {
+  const db = client();
+  const sample = check<SampleRow[]>(
+    await db.from("validation_sample").select("run_id, task_id, stratum, stratum_size, position").eq("task_id", input.task_id),
+    "validation_sample",
+  );
+  if (!sample[0]) throw new Error("validation_sample: task not in the sample");
+  const model = (await sampleModelLabels(sample)).get(input.task_id);
+  if (!model) throw new Error("task_exposure_scores: score not found");
+  const agrees = input.label === model;
+  written(
+    await db.from("score_reviews").upsert(
+      {
+        run_id: sample[0].run_id,
+        task_id: input.task_id,
+        reviewer: input.reviewer,
+        agrees,
+        override_label: agrees ? null : input.label,
+        note: input.note,
+        reviewed_at: new Date().toISOString(),
+      },
+      { onConflict: "run_id,task_id,reviewer" },
+    ),
+    "score_reviews",
+  );
 }
