@@ -76,3 +76,16 @@ test("The adoption views run as the caller and suppress small groups", () => {
   }
   assert.match(sql, /grant select on fow\.v_adoption_manager, fow\.v_tool_mix, fow\.v_pulse_sentiment to service_role/);
 });
+
+test("The action planner views run as the caller and suppress small groups", () => {
+  for (const view of ["v_function_readiness", "v_function_skill_gaps", "v_redeployment_paths"]) {
+    assert.match(sql, new RegExp(`create view fow\\.${view}\\s+with \\(security_invoker = true\\)`), view);
+    const body = sql.slice(sql.indexOf(`create view fow.${view}`)).split(/;\s*\n/)[0];
+    assert.match(body, /fow\.min_group_size\(\)/, view);
+  }
+  assert.match(sql, /create view fow\.v_course_catalog\s+with \(security_invoker = true\)/);
+  assert.match(
+    sql,
+    /grant select on fow\.v_function_readiness, fow\.v_function_skill_gaps, fow\.v_redeployment_paths,\s+fow\.v_course_catalog to service_role/
+  );
+});

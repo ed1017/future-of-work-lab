@@ -8,6 +8,9 @@ import type {
   RegisterRow,
 } from "@/lib/overview/metrics.mjs";
 import { supabaseProjectUrl } from "@/lib/scoring/supabase-url.mjs";
+import { PLANNER_VIEWS } from "@/lib/actions/facts.mjs";
+import type { PlannerRows } from "@/lib/actions/facts.mjs";
+import type { RecommendationRow } from "@/lib/actions/screen.mjs";
 
 // Server-only reads of the fow aggregate views with the service role key. Nothing in
 // this file runs in the browser; pages pass only aggregates to client components.
@@ -59,7 +62,7 @@ export function describeLoadError(error: unknown): string {
   return text.slice(0, 400);
 }
 
-export type ActionRow = { scope_key: string; move: string; text: string };
+export type ActionRow = { scope_key: string; move: string; text: string; created_at: string };
 
 export type DatasetInfo = { name: string; headcount: number | null; functions: number };
 
@@ -73,10 +76,10 @@ export async function getOverviewData(datasetId = DEFAULT_DATASET) {
     db.from("datasets").select("name").eq("dataset_id", datasetId).maybeSingle(),
     db
       .from("action_recommendations")
-      .select("scope_key, move, text")
+      .select("scope_key, move, text, created_at")
       .eq("dataset_id", datasetId)
       .order("created_at", { ascending: false })
-      .limit(4),
+      .limit(200),
   ]);
 
   const data: OverviewData = {
@@ -271,4 +274,43 @@ export async function insertAssessment(input: AssessmentInput) {
 
 export async function deleteUseCase(id: string) {
   written(await client().from("ai_use_cases").delete().eq("use_case_id", id), "ai_use_cases");
+}
+
+// Action plan -------------------------------------------------------------------
+
+/** Views that hold one dataset's rows; the others are company-wide. */
+const DATASET_VIEWS = new Set([
+  "v_function_exposure",
+  "v_exposure_adoption",
+  "v_job_exposure",
+  "v_function_readiness",
+  "v_function_skill_gaps",
+  "v_redeployment_paths",
+]);
+
+/**
+ * The newest recommendations plus every view they may cite, so the screen can check
+ * each cited data point against the current rows. All of these are aggregate views.
+ */
+export async function getActionPlanData(datasetId = DEFAULT_DATASET) {
+  const db = client();
+  const [recommendations, ...views] = await Promise.all([
+    db
+      .from("action_recommendations")
+      .select("scope_key, move, text, evidence, model, prompt_sha, run_id, created_at")
+      .eq("dataset_id", datasetId)
+      .order("created_at", { ascending: false })
+      .limit(200),
+    ...Object.values(PLANNER_VIEWS).map((view) => {
+      const query = db.from(view).select("*");
+      return DATASET_VIEWS.has(view) ? query.eq("dataset_id", datasetId) : query;
+    }),
+  ]);
+  const rows = Object.fromEntries(
+    Object.entries(PLANNER_VIEWS).map(([prop, view], i) => [prop, check<Record<string, unknown>[]>(views[i], view)]),
+  ) as unknown as PlannerRows;
+  return {
+    recommendations: check<RecommendationRow[]>(recommendations, "action_recommendations"),
+    rows,
+  };
 }
