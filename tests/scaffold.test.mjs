@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import { promisify } from "node:util";
 
@@ -45,11 +46,17 @@ test("Server secrets are never exposed with a NEXT_PUBLIC_ prefix", async () => 
   }
 });
 
-test("Score script stub runs and accepts a dataset argument", async () => {
-  const { stdout } = await run(process.execPath, [
-    "scripts/score.mjs",
-    "--dataset",
-    "builtin",
-  ]);
-  assert.match(stdout, /dataset=builtin/);
+test("Score script needs a dataset and Supabase credentials before it does anything", async () => {
+  const script = new URL("../scripts/score.mjs", import.meta.url).pathname;
+  const env = { PATH: process.env.PATH };
+  // Run outside the repo so a developer's .env.local is not loaded.
+  const opts = { cwd: tmpdir(), env };
+  await assert.rejects(run(process.execPath, [script], opts), (err) => {
+    assert.match(err.stderr, /Usage: npm run score -- --dataset <id>/);
+    return true;
+  });
+  await assert.rejects(run(process.execPath, [script, "--dataset", "builtin"], opts), (err) => {
+    assert.match(err.stderr, /Missing environment variables: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY/);
+    return true;
+  });
 });
