@@ -5,7 +5,8 @@ import { QuadrantChart } from "@/components/charts/quadrant-chart";
 import { int, pct, SUPPRESSED } from "@/components/format";
 import { OverviewFilters } from "@/components/overview-filters";
 import { SiteHeader } from "@/components/site-header";
-import { getOverviewData } from "@/lib/data/fow";
+import { LoadError } from "@/components/load-error";
+import { describeLoadError, getOverviewData } from "@/lib/data/fow";
 import { buildOverview, normalizeWeighting } from "@/lib/overview/metrics.mjs";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -38,7 +39,13 @@ function Kpi({ label, value, note, title }: { label: string; value: string; note
 export default async function OverviewPage({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
   const weighting = normalizeWeighting(first(params.weighting));
-  const { data, info, actions } = await getOverviewData();
+  let loaded;
+  try {
+    loaded = await getOverviewData();
+  } catch (error) {
+    return <LoadError message={describeLoadError(error)} />;
+  }
+  const { data, info, actions } = loaded;
 
   const functionNames = data.functionExposure
     .filter((r) => !r.is_total && r.function_name)

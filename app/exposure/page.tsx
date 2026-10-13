@@ -3,7 +3,8 @@ import { Card, CardHeading, SourceNote } from "@/components/card";
 import { int, pct } from "@/components/format";
 import { OverviewFilters } from "@/components/overview-filters";
 import { SiteHeader } from "@/components/site-header";
-import { DEFAULT_DATASET, getJobTasks, getOverviewData } from "@/lib/data/fow";
+import { LoadError } from "@/components/load-error";
+import { DEFAULT_DATASET, describeLoadError, getJobTasks, getOverviewData } from "@/lib/data/fow";
 import { buildExposureDrilldown, jobTaskDetail, normalizeWeighting } from "@/lib/overview/metrics.mjs";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -29,7 +30,13 @@ function ShareBar({ automate, augment }: { automate: number | null; augment: num
 export default async function ExposurePage({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
   const weighting = normalizeWeighting(first(params.weighting));
-  const { data, info } = await getOverviewData();
+  let loaded;
+  try {
+    loaded = await getOverviewData();
+  } catch (error) {
+    return <LoadError message={describeLoadError(error)} />;
+  }
+  const { data, info } = loaded;
 
   const functionNames = data.functionExposure
     .filter((r) => !r.is_total && r.function_name)
@@ -41,7 +48,14 @@ export default async function ExposurePage({ searchParams }: { searchParams: Sea
 
   const jobKey = first(params.job);
   const job = functionName ? data.jobs.find((j) => j.job_key === jobKey && j.function_name === functionName) : undefined;
-  const tasks = job ? await getJobTasks(DEFAULT_DATASET, job.job_key) : null;
+  let tasks: Awaited<ReturnType<typeof getJobTasks>> | null = null;
+  if (job) {
+    try {
+      tasks = await getJobTasks(DEFAULT_DATASET, job.job_key);
+    } catch (error) {
+      return <LoadError message={describeLoadError(error)} />;
+    }
+  }
   const detail = tasks ? jobTaskDetail(tasks.jobTasks, tasks.scores) : null;
 
   const link = (next: { function?: string | null; job?: string | null }) => {

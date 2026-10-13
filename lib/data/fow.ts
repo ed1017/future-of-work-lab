@@ -38,6 +38,13 @@ function check<T>(result: { data: unknown; error: { code?: string; message: stri
 
 type RunStamp = { status: string; finished_at: string | null; started_at: string };
 
+/** Why a read failed, as text safe to show: never includes the URL or key. */
+export function describeLoadError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const cause = error instanceof Error && error.cause instanceof Error ? ` (${error.cause.message})` : "";
+  return `${message}${cause}`.slice(0, 400);
+}
+
 export type ActionRow = { scope_key: string; move: string; text: string };
 
 export type DatasetInfo = { name: string; headcount: number | null; functions: number };
